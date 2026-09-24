@@ -3,7 +3,7 @@
   "name": "io.github.pipeworx-io/federal-register",
   "title": "Federal Register",
   "description": "Federal Register MCP — US Federal Register API (free, no auth)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "websiteUrl": "https://pipeworx.io/packs/federal-register",
   "repository": {
     "url": "https://github.com/pipeworx-io/mcp-federal-register",
