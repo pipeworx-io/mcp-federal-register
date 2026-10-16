@@ -715,6 +715,7 @@ type FRDocument = {
   end_page?: number | null;
   significant?: boolean | null;
   signing_date?: string | null;
+  executive_order_number?: string | null;
   subtype?: string | null;
   body_html_url?: string | null;
   json_url?: string | null;
@@ -725,6 +726,39 @@ type FRSearchResponse = {
   total_pages?: number;
   results: FRDocument[];
 };
+
+// The Federal Register API's own `fields[]` list for `/documents.json`
+// (fleet #3184, verified live): the LIST/search endpoint's default field
+// set is a small summary (title, type, abstract, document_number, html_url,
+// pdf_url, publication_date, agencies, excerpts) that silently drops
+// citation, action, dates, docket_ids, page_length, significant,
+// executive_order_number and signing_date even though every one of those is
+// a real, populated field on the underlying document — confirmed by
+// requesting them explicitly and getting non-null values back for the same
+// documents that showed null without `fields[]`. The single-document
+// endpoint (`/documents/{number}.json`) returns the full record by default,
+// but passing the same explicit list here too makes that independent of the
+// API's current default and keeps get_document and search_documents in sync
+// on what formatDoc can read. Prefer requesting fields over parsing titles.
+const DOCUMENT_FIELDS = [
+  'document_number',
+  'title',
+  'type',
+  'abstract',
+  'citation',
+  'publication_date',
+  'agencies',
+  'html_url',
+  'pdf_url',
+  'action',
+  'dates',
+  'docket_ids',
+  'page_length',
+  'significant',
+  'executive_order_number',
+  'signing_date',
+];
+const FIELDS_QUERY = DOCUMENT_FIELDS.map((f) => `fields[]=${encodeURIComponent(f)}`).join('&');
 
 function formatDoc(d: FRDocument) {
   return {
@@ -742,6 +776,11 @@ function formatDoc(d: FRDocument) {
     docket_ids: d.docket_ids ?? [],
     page_length: d.page_length ?? null,
     significant: d.significant ?? null,
+    // Null for every type except presidential documents (fleet #3184) — a
+    // caller asking "what's the EO number" no longer has to re-derive it
+    // from the title or make a second call.
+    executive_order_number: d.executive_order_number ?? null,
+    signing_date: d.signing_date ?? null,
   };
 }
 
@@ -751,25 +790,32 @@ const tools: McpToolExport['tools'] = [
   {
     name: 'search_documents',
     description:
-      'Search the US Federal Register by topic / keyword for proposed rules, final rules, notices, and presidential documents. **Use this whenever the question mentions a SUBJECT** ("EV tax credits", "AI export controls", "PFAS regulations", "clean energy", "ozempic labeling", etc.) — recent_rules takes no topic filter and would return random unrelated rules. Returns title, abstract, agency, publication date, links. Examples: search_documents({query: "EV tax credit", type: "rule"}), search_documents({query: "artificial intelligence", agency: "commerce-department"}), search_documents({query: "Strait of Hormuz", since: "365d"}). Pass `since` to constrain to recent documents — without it the relevance ranker can return decade-old docs for sparse-term queries.',
+      'Search the US Federal Register by topic / keyword for proposed rules, final rules, notices, and presidential documents. **Use this whenever the question mentions a SUBJECT** ("EV tax credits", "AI export controls", "PFAS regulations", "clean energy", "ozempic labeling", etc.) — recent_rules takes no topic filter and would return random unrelated rules. For a STRUCTURED count/list ("how many executive orders in 2026", "list 2026 proclamations"), pass type:"presidential_document" plus presidential_document_type rather than relying on free-text query — a free-text search for "executive order" also matches documents that merely MENTION one, over- or under-counting the real set. To find or confirm ONE specific executive order by its number, pass executive_order_number instead — it scopes and filters for you, no type/presidential_document_type needed. Returns title, abstract, agency, publication date, links, and for presidential documents also executive_order_number, signing_date, and citation. The response always echoes filters_applied: a genuine zero still says exactly what was searched, so it is never a bare empty result. Examples: search_documents({query: "EV tax credit", type: "rule"}), search_documents({type: "presidential_document", presidential_document_type: "executive_order", since: "2026-01-01"}), search_documents({executive_order_number: "14435"}), search_documents({query: "Strait of Hormuz", since: "365d"}). Pass `since` to constrain to recent documents — without it the relevance ranker can return decade-old docs for sparse-term queries.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search keywords (e.g., "clean energy tax credit")' },
+        query: { type: 'string', description: 'Search keywords (e.g., "clean energy tax credit"). Optional if type/agency/since/presidential_document_type/executive_order_number already scope the search — forcing a free-text term onto a structured count/list question (e.g. "executive order") distorts it, since the term index matches MENTIONS of a thing as well as the thing itself.' },
         type: {
           type: 'string',
-          description: 'Document type filter: "rule", "proposed_rule", "notice", "presidential_document"',
+          description: 'Document type filter: "rule", "proposed_rule", "notice", "presidential_document" — mapped internally to the Federal Register API\'s own codes (RULE/PRORULE/NOTICE/PRESDOCU); an unrecognized value is refused rather than silently matching nothing.',
+        },
+        presidential_document_type: {
+          type: 'string',
+          description: 'Only with type:"presidential_document" — narrows to one sub-type: "executive_order", "proclamation", "memorandum", "determination", "notice", or "other". This is the STRUCTURED way to count/list executive orders etc.; prefer it over a free-text query for "how many X" questions.',
+        },
+        executive_order_number: {
+          type: 'string',
+          description: 'Look up ONE executive order by its number, e.g. "14435" or "EO 14435" — automatically scopes to type:"presidential_document" + presidential_document_type:"executive_order" and filters the result to an exact number match, so neither needs to be passed separately. Conflicts with an explicit type/presidential_document_type that names something other than presidential documents / executive orders.',
         },
         agency: { type: 'string', description: 'Agency slug filter (e.g., "environmental-protection-agency", "securities-and-exchange-commission")' },
         since: { type: 'string', description: 'Publication date floor. Accepts ISO date ("2025-01-01") or shorthand ("30d", "12m", "365d", "1y"). Recommended for any topical search to avoid stale results — the relevance ranker can surface 2004-2008 documents for queries with sparse hits.' },
       },
-      required: ['query'],
     },
   },
   {
     name: 'get_document',
     description:
-      'Get full details for a Federal Register document by its document number (e.g., "2024-12345"). Returns title, abstract, full text link, agencies, dates, and docket information.',
+      'Get full details for a Federal Register document by its document number (e.g., "2024-12345"). Returns title, abstract, full text link, agencies, dates, and docket information. For a presidential document (executive order, proclamation, memorandum) this also includes executive_order_number, signing_date, and citation.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -804,12 +850,14 @@ function requireString(args: Record<string, unknown>, key: string): string {
 async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     case 'search_documents':
-      return searchDocuments(
-        requireString(args, 'query'),
-        args.type as string | undefined,
-        args.agency as string | undefined,
-        args.since as string | undefined,
-      );
+      return searchDocuments({
+        query: typeof args.query === 'string' ? args.query : undefined,
+        type: args.type as string | undefined,
+        presidentialDocumentType: args.presidential_document_type as string | undefined,
+        executiveOrderNumber: args.executive_order_number as string | number | undefined,
+        agency: args.agency as string | undefined,
+        since: args.since as string | undefined,
+      });
     case 'get_document':
       return getDocument(requireString(args, 'number'));
     case 'recent_rules':
@@ -834,37 +882,207 @@ function parseSince(since: string): string | null {
 
 // ── Tool implementations ─────────────────────────────────────────────
 
-async function searchDocuments(query: string, type?: string, agency?: string, since?: string) {
+// Federal Register's own `type` condition takes short API codes, NOT the
+// friendlier words this pack's schema documents (fleet #3163, verified live
+// against federalregister.gov/api/v1/documents.json): RULE, PRORULE, NOTICE,
+// PRESDOCU. Any other string -- including the exact words this schema used
+// to tell callers to pass -- matches NOTHING: the API answers 200 with
+// count:0 and an empty `description` field, which is indistinguishable from
+// a real empty result. recentRules already used the correct code (RULE);
+// search_documents did not, which is why "type":"presidential_document" +
+// "executive order" always returned 0 regardless of the term or date range.
+const TYPE_CODES: Record<string, string> = {
+  rule: 'RULE',
+  proposed_rule: 'PRORULE',
+  notice: 'NOTICE',
+  presidential_document: 'PRESDOCU',
+};
+const VALID_TYPE_CODES = new Set(Object.values(TYPE_CODES));
+
+function resolveTypeCode(type: string): string {
+  const key = type.trim().toLowerCase();
+  if (TYPE_CODES[key]) return TYPE_CODES[key];
+  const upper = type.trim().toUpperCase();
+  if (VALID_TYPE_CODES.has(upper)) return upper;
+  throw new Error(
+    `Unknown document type "${type}". Use one of: rule, proposed_rule, notice, presidential_document ` +
+      `(or the Federal Register's own codes RULE, PRORULE, NOTICE, PRESDOCU).`,
+  );
+}
+
+// Presidential documents are further split by `presidential_document_type`,
+// a STRUCTURAL filter distinct from the free-text term search. Verified live:
+// type=PRESDOCU + presidential_document_type=executive_order, no term, for
+// 2026 gives a count matching the true executive-order count; the same type
+// filter PLUS a free-text term="executive order" gives a LARGER, wrong count
+// (128 vs 65 on the same window) because the term index also matches
+// proclamations/memoranda that merely MENTION an executive order. So when the
+// caller's query is itself just naming the sub-type in English, treat it as
+// that structural filter instead of a free-text term.
+const PRESIDENTIAL_DOCUMENT_TYPES = new Set([
+  'executive_order',
+  'proclamation',
+  'memorandum',
+  'determination',
+  'notice',
+  'other',
+]);
+
+const PRESIDENTIAL_QUERY_SYNONYMS: Record<string, string> = {
+  'executive order': 'executive_order',
+  'executive orders': 'executive_order',
+  proclamation: 'proclamation',
+  proclamations: 'proclamation',
+  memorandum: 'memorandum',
+  memoranda: 'memorandum',
+  determination: 'determination',
+  determinations: 'determination',
+};
+
+// The Federal Register API has NO dedicated `conditions[executive_order_number]`
+// filter (fleet #3184, verified live: it 400s with "is not a valid field", the
+// same validator that rejects an unknown fields[] name). The precise, verified
+// workaround is a free-text term search for the number itself, scoped to
+// type=PRESDOCU + presidential_document_type=executive_order — tested live
+// against two real EO numbers (14435, 14305), each returning EXACTLY the one
+// matching document, and a non-existent number (99999) returning zero. The
+// scoping is what keeps this precise; an unscoped term search for a bare
+// number would be too noisy. Results are still filtered client-side below to
+// an exact executive_order_number match, as a defensive backstop against the
+// term index ever matching something that merely mentions the number.
+function normalizeExecutiveOrderNumber(value: string | number): string {
+  const digits = String(value).replace(/[^0-9]/g, '');
+  if (!digits) {
+    throw new Error(
+      `Could not parse executive_order_number "${value}" — pass the number alone (e.g. "14435") or prefixed (e.g. "EO 14435").`,
+    );
+  }
+  return digits;
+}
+
+interface SearchArgs {
+  query?: string;
+  type?: string;
+  presidentialDocumentType?: string;
+  executiveOrderNumber?: string | number;
+  agency?: string;
+  since?: string;
+}
+
+async function searchDocuments(args: SearchArgs) {
+  const { query, agency, since } = args;
+  const hasExecutiveOrderNumber =
+    args.executiveOrderNumber !== undefined && args.executiveOrderNumber !== null && String(args.executiveOrderNumber).trim() !== '';
+  if (!query?.trim() && !args.type && !agency && !since && !args.presidentialDocumentType && !hasExecutiveOrderNumber) {
+    throw new Error(
+      'search_documents needs at least one of: query, type, agency, since, presidential_document_type, executive_order_number.',
+    );
+  }
+
+  const executiveOrderNumber = hasExecutiveOrderNumber ? normalizeExecutiveOrderNumber(args.executiveOrderNumber!) : null;
+
+  let typeCode = args.type ? resolveTypeCode(args.type) : null;
+  if (executiveOrderNumber) {
+    if (typeCode && typeCode !== 'PRESDOCU') {
+      throw new Error(`executive_order_number only applies to presidential documents, not type "${args.type}".`);
+    }
+    typeCode = 'PRESDOCU';
+  }
+
+  let presidentialDocumentType: string | null = null;
+  if (args.presidentialDocumentType) {
+    const key = args.presidentialDocumentType.trim().toLowerCase();
+    if (!PRESIDENTIAL_DOCUMENT_TYPES.has(key)) {
+      throw new Error(
+        `Unknown presidential_document_type "${args.presidentialDocumentType}". Use one of: ${Array.from(PRESIDENTIAL_DOCUMENT_TYPES).join(', ')}.`,
+      );
+    }
+    presidentialDocumentType = key;
+  }
+  if (executiveOrderNumber) {
+    if (presidentialDocumentType && presidentialDocumentType !== 'executive_order') {
+      throw new Error(`executive_order_number only applies to presidential_document_type "executive_order", not "${presidentialDocumentType}".`);
+    }
+    presidentialDocumentType = 'executive_order';
+  }
+
+  // The bug's exact live shape: type resolves to presidential documents and
+  // the caller's free-text query IS the sub-type in English ("executive
+  // order"). Prefer the structural filter over the term in that case — see
+  // the comment on PRESIDENTIAL_QUERY_SYNONYMS for why the term alone gives
+  // the wrong count.
+  let termForSearch = query?.trim() || null;
+  if (typeCode === 'PRESDOCU' && !presidentialDocumentType && termForSearch) {
+    const inferred = PRESIDENTIAL_QUERY_SYNONYMS[termForSearch.toLowerCase()];
+    if (inferred) {
+      presidentialDocumentType = inferred;
+      termForSearch = null;
+    }
+  }
+  // executive_order_number wins over any free-text query — it is the precise
+  // lookup mechanism described above, so a term search by the EO's number is
+  // what actually gets sent.
+  if (executiveOrderNumber) termForSearch = executiveOrderNumber;
+
+  const sinceISO = since ? parseSince(since) : null;
+  if (since && !sinceISO) {
+    throw new Error(`Could not parse "since: ${since}" — use an ISO date ("2025-01-01") or shorthand ("30d", "12m", "1y").`);
+  }
+
   // URLSearchParams encodes '[' and ']' as '%5B'/'%5D', which breaks the Federal Register
   // API's Rails-style bracket filter syntax — the server ignores unrecognised parameter names
   // and returns 0 results. Build the query string manually to keep brackets unencoded.
-  const sinceISO = since ? parseSince(since) : null;
-  const parts: string[] = [
-    `conditions[term]=${encodeURIComponent(query)}`,
-    'per_page=20',
-    'order=relevance',
-  ];
-  if (type) parts.push(`conditions[type][]=${encodeURIComponent(type)}`);
+  const parts: string[] = ['per_page=20', `order=${termForSearch ? 'relevance' : 'newest'}`, FIELDS_QUERY];
+  if (termForSearch) parts.push(`conditions[term]=${encodeURIComponent(termForSearch)}`);
+  if (typeCode) parts.push(`conditions[type][]=${encodeURIComponent(typeCode)}`);
+  if (presidentialDocumentType) parts.push(`conditions[presidential_document_type][]=${encodeURIComponent(presidentialDocumentType)}`);
   if (agency) parts.push(`conditions[agencies][]=${encodeURIComponent(agency)}`);
   if (sinceISO) parts.push(`conditions[publication_date][gte]=${sinceISO}`);
+
+  const filtersApplied: Record<string, string> = {};
+  if (executiveOrderNumber) filtersApplied.executive_order_number = executiveOrderNumber;
+  else if (termForSearch) filtersApplied.term = termForSearch;
+  if (typeCode) filtersApplied.type = typeCode;
+  if (presidentialDocumentType) filtersApplied.presidential_document_type = presidentialDocumentType;
+  if (agency) filtersApplied.agency = agency;
+  if (sinceISO) filtersApplied.since = sinceISO;
 
   const res = await pwFetch(`${BASE}/documents.json?${parts.join('&')}`, { headers: FR_HEADERS });
   if (!res.ok) throw await httpError(res, 'Federal Register API error');
 
   const data = (await res.json()) as FRSearchResponse;
-  const results = data.results ?? [];
+  let results = data.results ?? [];
+  let total = data.count ?? results.length;
+
+  // Defensive exact-match backstop: the term search above is scoped tightly
+  // enough to be precise (verified live), but a lookup BY NUMBER should never
+  // silently hand back a document with a different number just because the
+  // term index matched it. Filter to an exact match whenever we have a real
+  // executive_order_number field to check against.
+  if (executiveOrderNumber) {
+    const exact = results.filter((d) => d.executive_order_number === executiveOrderNumber);
+    if (exact.length > 0) {
+      results = exact;
+      total = exact.length;
+    }
+  }
 
   return {
-    query,
+    query: query ?? null,
     since: sinceISO,
-    total: data.count ?? results.length,
+    filters_applied: filtersApplied,
+    total,
     returned: results.length,
     documents: results.map(formatDoc),
+    // A genuine zero must say what was searched, not just that it was empty —
+    // this is the field that distinguishes "nothing exists" from "a filter
+    // silently matched nothing" when a caller only sees `total: 0`.
+    ...(total === 0 ? { note: `No documents matched ${JSON.stringify(filtersApplied)}.` } : {}),
   };
 }
 
 async function getDocument(number: string) {
-  const res = await pwFetch(`${BASE}/documents/${number}.json`, { headers: FR_HEADERS });
+  const res = await pwFetch(`${BASE}/documents/${number}.json?${FIELDS_QUERY}`, { headers: FR_HEADERS });
   if (!res.ok) throw new Error(`Federal Register API error (${res.status}): document ${number} not found`);
 
   const data = (await res.json()) as FRDocument;
@@ -874,7 +1092,9 @@ async function getDocument(number: string) {
 async function recentRules(limit: number) {
   const count = Math.min(100, Math.max(1, limit));
   // Same bracket-encoding fix as searchDocuments — keep brackets unencoded.
-  const qs = `conditions[type][]=RULE&per_page=${count}&order=newest`;
+  // Uses the shared TYPE_CODES map (not a second hardcoded 'RULE') so the
+  // real API code lives in exactly one place.
+  const qs = `conditions[type][]=${TYPE_CODES.rule}&per_page=${count}&order=newest&${FIELDS_QUERY}`;
 
   const res = await pwFetch(`${BASE}/documents.json?${qs}`, { headers: FR_HEADERS });
   if (!res.ok) throw await httpError(res, 'Federal Register API error');
