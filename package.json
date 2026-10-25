@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-federal-register",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Federal Register MCP — US Federal Register API (free, no auth)",
   "type": "module",
   "main": "src/index.ts",
@@ -26,7 +26,7 @@
     "@cloudflare/workers-types": "^4.20260405.1"
   },
   "pipeworx": {
-    "sourceHash": "v1-c167fcd927ec6020f7052fb01ab5f255eecbe4f077270d6e7d627954b3110333",
-    "sourceCommit": "712a5e0171ea24483214329d0cd7efdfd9b80352"
+    "sourceHash": "v1-e2bfbb86c6ef0a4e58574c638afe4dfae123110ed67ee6fc02f7b0ab6eb0dca1",
+    "sourceCommit": "722087a9bda73f85942e8f6bbfd598544cb0d490"
   }
 }
