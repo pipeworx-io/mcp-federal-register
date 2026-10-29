@@ -1,12 +1,20 @@
 {
   "name": "@pipeworx/mcp-federal-register",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Federal Register MCP — US Federal Register API (free, no auth)",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./tools.json": "./tools.json",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "mcp-federal-register": "bin/cli.js"
+  },
+  "files": ["bin/", "lib/", "tools.json", "server.json"],
+  "engines": {
+    "node": ">=18"
   },
   "keywords": ["mcp", "mcp-server", "model-context-protocol", "pipeworx", "federal-register"],
   "license": "MIT",
@@ -14,19 +22,12 @@
     "type": "git",
     "url": "git+https://github.com/pipeworx-io/mcp-federal-register.git"
   },
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "tsx": "^4.19.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.3",
-    "@cloudflare/workers-types": "^4.20260405.1"
-  },
+  "mcpName": "io.github.pipeworx-io/federal-register",
   "pipeworx": {
-    "sourceHash": "v1-e2bfbb86c6ef0a4e58574c638afe4dfae123110ed67ee6fc02f7b0ab6eb0dca1",
-    "sourceCommit": "722087a9bda73f85942e8f6bbfd598544cb0d490"
+    "mode": "gateway",
+    "slug": "federal-register",
+    "gatewaySlug": "federal-register",
+    "sourceHash": "v1-32374b19b68f259bdd66e74dc9c49f70ab4a254df4f9b08a1c2ecc012e6e2d80",
+    "sourceCommit": "bb047243cf27f32453103de186b8e6a8b6a1ce79"
   }
 }
