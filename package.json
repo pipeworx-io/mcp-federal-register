@@ -1,6 +1,6 @@
 {
   "name": "@pipeworx/mcp-federal-register",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Federal Register MCP — US Federal Register API (free, no auth)",
   "type": "module",
   "main": "lib/index.js",
@@ -28,6 +28,6 @@
     "slug": "federal-register",
     "gatewaySlug": "federal-register",
     "sourceHash": "v1-32374b19b68f259bdd66e74dc9c49f70ab4a254df4f9b08a1c2ecc012e6e2d80",
-    "sourceCommit": "bb047243cf27f32453103de186b8e6a8b6a1ce79"
+    "sourceCommit": "06a6b405041923c5ddf2ac2436e7c049e635f464"
   }
 }
